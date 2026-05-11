@@ -5,7 +5,7 @@ import socket
 from typing import Callable
 
 import psutil
-from scapy.all import IP, ICMP, TCP, UDP, sniff
+from scapy.all import IP, ICMP, TCP, UDP, AsyncSniffer, sniff
 
 
 @dataclass
@@ -77,3 +77,32 @@ def start_sniffing(handler: Callable[[PacketInfo], None]) -> None:
             handler(info)
 
     sniff(prn=_callback, store=False)
+
+
+class SnifferController:
+    def __init__(self, handler: Callable[[PacketInfo], None]) -> None:
+        self._handler = handler
+        self._sniffer: AsyncSniffer | None = None
+
+    def start(self) -> None:
+        if self._sniffer:
+            return
+        local_ips = _get_local_ips()
+
+        def _callback(packet) -> None:
+            info = parse_packet(packet, local_ips)
+            if info:
+                self._handler(info)
+
+        self._sniffer = AsyncSniffer(prn=_callback, store=False)
+        self._sniffer.start()
+
+    def stop(self) -> None:
+        if not self._sniffer:
+            return
+        self._sniffer.stop()
+        self._sniffer = None
+
+    @property
+    def is_running(self) -> bool:
+        return self._sniffer is not None
