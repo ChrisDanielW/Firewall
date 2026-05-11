@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import socket
 from typing import Callable
 
+import psutil
 from scapy.all import IP, ICMP, TCP, UDP, sniff
 
 
@@ -16,7 +18,16 @@ class PacketInfo:
     direction: str
 
 
-def parse_packet(packet) -> PacketInfo | None:
+def _get_local_ips() -> set[str]:
+    local_ips: set[str] = set()
+    for addrs in psutil.net_if_addrs().values():
+        for addr in addrs:
+            if addr.family == socket.AF_INET and addr.address:
+                local_ips.add(addr.address)
+    return local_ips
+
+
+def parse_packet(packet, local_ips: set[str]) -> PacketInfo | None:
     if not packet.haslayer(IP):
         return None
 
@@ -40,7 +51,12 @@ def parse_packet(packet) -> PacketInfo | None:
     elif packet.haslayer(ICMP):
         protocol = "ICMP"
 
-    direction = "OUT" if ip_layer.src == packet[IP].src else "IN"
+    if src_ip in local_ips:
+        direction = "OUT"
+    elif dst_ip in local_ips:
+        direction = "IN"
+    else:
+        direction = "UNKNOWN"
 
     return PacketInfo(
         src_ip=src_ip,
@@ -53,8 +69,10 @@ def parse_packet(packet) -> PacketInfo | None:
 
 
 def start_sniffing(handler: Callable[[PacketInfo], None]) -> None:
+    local_ips = _get_local_ips()
+
     def _callback(packet) -> None:
-        info = parse_packet(packet)
+        info = parse_packet(packet, local_ips)
         if info:
             handler(info)
 
